@@ -1,65 +1,338 @@
 # Philharmonic Project
 
-Учебный проект по курсы БД. Система управления филармонией – бэкенд на Spring Boot, и клиентское приложение на JavaFX.
+Учебный проект по курсу БД. Система управления филармонией с кастомной системой ролей – бэкенд на Spring Boot, и клиентское приложение на JavaFX.
+
+*Данные диаграммы полностью и анализ архитектуры по большей части сгенерированы ИИ для скорости, т.к. имеют лишь демонстративный характер.* 
 
 ## Структура проекта
 
-- `Philharmonic/` – серверная часть (Spring Boot + JPA + Security)
-- `philharmonic-client/` – клиентская часть (JavaFX)
+- `Philharmonic-server/` – серверная часть (Spring Boot + Hibernate JPA + Security)
+- `Philharmonic-client/` – клиентская часть (JavaFX)
 
-## Требования
+Проект демонстрирует:
+- доменную модель с наследованием для мероприятий и площадок;
+- REST API с DTO, валидацией и единым форматом ошибок;
+- ролевую модель доступа на основе permissions и JWT;
+- клиент-серверное взаимодействие через JSON;
+- MVC-подход в JavaFX-клиенте с FXML и CSS.
 
-- **Java 25**
-- Maven 3.9+
-- Docker / Docker-compose
+---
 
-## Запуск сервера
+## Технологический стек
 
-### 1. База данных
+| Компонент | Технологии |
+|---|---|
+| Сервер | Java 25, Spring Boot 4.0.6, Spring WebMVC, Spring Data JPA, Spring Security, Validation, AOP |
+| БД | PostgreSQL 18, Hibernate/JPA |
+| Аутентификация | JWT (jjwt 0.12.6), permissions |
+| Клиент | Java 25, JavaFX 25, FXML, CSS, AtlantaFX, Jackson |
+| Сборка | Maven |
+| Инфраструктура | Docker, Docker Compose (dev/prod) |
 
-Создайте базу данных `philharmonic`:
+---
 
-```sql
-CREATE DATABASE philharmonic;
+## Высокоуровневая архитектура
+
+```mermaid
+flowchart LR
+    User[Пользователь] --> Client[JavaFX Client]
+    Client -->|REST / JSON / JWT| Server[Spring Boot Server]
+    Server -->|JPA / Hibernate| DB[(PostgreSQL 18)]
+    Server --> Security[Security + JWT]
+    Server --> Reports[Reports]
 ```
 
-Или используйте Docker:
+Клиент не работает с БД напрямую. Все операции проходят через REST API сервера. Сервер инкапсулирует бизнес-логику, доступ к данным, безопасность и валидацию.
 
-```bash
-docker run --name postgres -e POSTGRES_DB=philharmonic -e POSTGRES_USER=user -e POSTGRES_PASSWORD=pass -p 5432:5432 -d postgres:18
+---
+
+## Серверная архитектура
+
+Сервер организован по **feature-based** принципу: каждый доменный модуль содержит собственные `controller`, `service`, `repository`, `domain`, `dto`.
+
+```mermaid
+flowchart TB
+    subgraph API["REST API"]
+        Controller[Controllers]
+    end
+
+    subgraph Business["Бизнес-логика"]
+        Service[Services]
+        Aspect[AOP @RequirePermission]
+    end
+
+    subgraph Data["Доступ к данным"]
+        Repository[Repositories]
+        Domain[JPA Domain Entities]
+    end
+
+    subgraph Cross["Сквозные модули"]
+        Security[Security / JWT]
+        Exception[Global Exception Handling]
+        Validation[Validation]
+        DTO[DTO / Mappers]
+    end
+
+    Controller --> DTO
+    Controller --> Service
+    Controller --> Aspect
+    Service --> Repository
+    Repository --> Domain
+    Security --> Controller
+    Exception --> Controller
+    Validation --> DTO
 ```
 
-### 2. Конфигурация
+### Основные модули сервера
 
-По умолчанию сервер использует профиль **dev** со следующими настройками (заданы в `application-dev.yml`):
+| Модуль | Назначение |
+|---|---|
+| `artist` | Артисты, жанры, импресарио |
+| `events` | Мероприятия и их типы: `competition`, `concert`, `festival`, `solo`, `otherevent`, базовый `event` |
+| `venues` | Площадки и их типы: `theatre`, `cinema`, `concert`, `culturalcentre`, `varietystage`, базовый `venue` |
+| `genre` | Музыкальные жанры |
+| `impresario` | Импресарио |
+| `organizer` | Организаторы мероприятий |
+| `identity` | Пользователи, роли, аутентификация: `auth`, `role`, `user` |
+| `reports` | Отчёты и агрегированные данные |
+| `shared` | Общие компоненты: аннотации, аспекты, конфигурация, безопасность, исключения, утилиты |
 
-- БД: `jdbc:postgresql://localhost:5432/philharmonic`, пользователь `user`, пароль `pass`
+### Наследование доменной модели
 
-### 3. Запуск через Docker
+Ключевая архитектурная особенность — наследование JPA-сущностей для событий и площадок.
 
-#### Режим разработки (dev)
+```mermaid
+classDiagram
+    class Event
+    class Competition
+    class Concert
+    class Festival
+    class Solo
+    class OtherEvent
 
-```bash
-cd Philharmonic
-docker compose up
+    Event <|-- Competition
+    Event <|-- Concert
+    Event <|-- Festival
+    Event <|-- Solo
+    Event <|-- OtherEvent
+
+    class Venue
+    class Theatre
+    class Cinema
+    class ConcertVenue
+    class CulturalCentre
+    class VarietyStage
+
+    Venue <|-- Theatre
+    Venue <|-- Cinema
+    Venue <|-- ConcertVenue
+    Venue <|-- CulturalCentre
+    Venue <|-- VarietyStage
 ```
 
-#### Режим продакшена (prod)
+Такой подход позволяет:
+- хранить общие поля в базовых сущностях;
+- добавлять специфичные атрибуты в подтипах;
+- использовать полиморфные запросы и DTO;
+- расширять модель без дублирования кода.
 
-Создайте в корне сервера файл `.env` (или задайте переменные окружения):
+---
 
-```env
-DB_URL=jdbc:postgresql://postgres:5432/philharmonic
-DB_USER=prod_user
-DB_PASSWORD=prod_password
-JWT_SECRET=supersecretproductionkey
+## Безопасность
+
+Безопасность построена на **JWT**, кастомных ролях и разрешениях.
+
+```mermaid
+flowchart LR
+    Login["/auth/login"] --> JWT["JWT Token"]
+    JWT --> Client["JavaFX Client"]
+    Client -->|"Authorization: Bearer"| API["REST API"]
+    API --> PermissionCheck{"@RequirePermission"}
+    PermissionCheck -->|"CREATE / READ / UPDATE / DELETE"| Service["Service Layer"]
 ```
 
-Запустите:
+Роли по умолчанию:
 
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env up
+| Роль | Разрешения |
+|---|---|
+| `USER` | `READ` |
+| `ADMIN` | `CREATE`, `READ`, `UPDATE` |
+| `SUPERADMIN` | `CREATE`, `READ`, `UPDATE`, `DELETE` |
+
+Все эндпоинты, кроме `/auth/**`, требуют JWT. Для проверки прав используются аннотации вида `@RequirePermission("CREATE")` и AOP-аспекты.
+
+---
+
+## Клиентская архитектура
+
+Клиент — JavaFX-приложение, разделённое на API-слой, модели, сессию и UI-компоненты.
+
+```mermaid
+flowchart LR
+    App[PhilharmonicApp] --> Session[Session]
+    App --> Main[Main UI]
+    Main --> Auth[Auth Views]
+    Main --> Tabs[Tabs / Views]
+    Tabs --> Components[Components]
+    Tabs --> Dialogs[Dialog Windows]
+    Tabs --> API[API Client]
+    API -->|HTTP / JSON| Server[Spring Boot Server]
+    API --> Model[Client Models]
+    Session --> API
 ```
+
+### Структура клиента
+
+| Пакет | Назначение |
+|---|---|
+| `api` | HTTP-клиент для взаимодействия с REST API |
+| `model` | Модели данных клиента |
+| `session` | Текущая сессия, токен, пользователь |
+| `ui.auth` | Окна и логика аутентификации |
+| `ui.main` | Главное окно приложения |
+| `ui.tabs` | Вкладки для работы с сущностями |
+| `ui.components` | Переиспользуемые UI-компоненты |
+| `ui.dialog` | Диалоговые окна |
+| `ui.util` | Вспомогательные UI-утилиты |
+| `util` | Общие утилиты |
+
+Ресурсы клиента:
+- `css/` — стили, включая тему AtlantaFX;
+- `fxml/` — FXML-разметка;
+- `fxml/tabs/` — FXML для вкладок.
+
+---
+
+## Поток выполнения запроса
+
+```mermaid
+sequenceDiagram
+    participant UI as JavaFX UI
+    participant API as ApiClient
+    participant C as Controller
+    participant AOP as Permission Aspect
+    participant S as Service
+    participant R as Repository
+    participant DB as PostgreSQL
+
+    UI->>API: Действие пользователя
+    API->>C: HTTP + JWT
+    C->>AOP: Проверка @RequirePermission
+    AOP-->>C: Доступ разрешён
+    C->>S: DTO запроса
+    S->>R: JPA-сущность
+    R->>DB: SQL
+    DB-->>R: Результат
+    R-->>S: Сущность
+    S-->>C: DTO ответа
+    C-->>API: JSON
+    API-->>UI: Модель клиента
+```
+
+---
+
+## Обзор API
+
+API сгруппирован по доменным областям.
+
+| Группа | Примеры эндпоинтов |
+|---|---|
+| Аутентификация | `/auth/login`, `/auth/register` |
+| Артисты | `/api/artists` |
+| Площадки | `/api/venues`, `/api/venues/theatres`, `/api/venues/cinemas` |
+| Мероприятия | `/api/events`, `/api/events/competitions`, `/api/events/concerts`, `/api/events/solo` |
+| Результаты конкурсов | `/api/competition-results` |
+| Импресарио | `/api/impresarios` |
+| Организаторы | `/api/organizers` |
+| Жанры | `/api/genres` |
+| Пользователи и роли | `/api/users`, `/api/roles` — только для `SUPERADMIN` |
+
+Ответы с ошибками унифицированы: `timestamp`, `status`, `error`, `message`, `path`, `details`. Поддерживаются ошибки валидации, 403, 404 и 500.
+
+---
+
+## Структура репозитория
+
+```text
+Philharmonic-server/
+├── Dockerfile
+├── docker-compose.yml
+├── docker-compose.prod.yml
+├── pom.xml
+├── Query.sql
+├── README.md
+├── curl-examples.md
+├── src/main/java/com/npopov/philharmonic/
+│   ├── artist/
+│   ├── events/
+│   │   ├── competition/
+│   │   ├── concert/
+│   │   ├── event/
+│   │   ├── festival/
+│   │   ├── otherevent/
+│   │   └── solo/
+│   ├── genre/
+│   ├── identity/
+│   │   ├── auth/
+│   │   ├── role/
+│   │   └── user/
+│   ├── impresario/
+│   ├── organizer/
+│   ├── reports/
+│   ├── shared/
+│   └── venues/
+│       ├── cinema/
+│       ├── concert/
+│       ├── culturalcentre/
+│       ├── theatre/
+│       ├── varietystage/
+│       └── venue/
+└── src/main/resources/
+    ├── static/
+    └── templates/
+
+Philharmonic-client/
+├── pom.xml
+├── src/main/java/com/npopov/philharmonic/client/
+│   ├── api/
+│   ├── model/
+│   ├── session/
+│   ├── ui/
+│   │   ├── auth/
+│   │   ├── components/
+│   │   ├── dialog/
+│   │   ├── main/
+│   │   ├── tabs/
+│   │   └── util/
+│   └── util/
+└── src/main/resources/
+    ├── css/
+    └── fxml/
+        └── tabs/
+```
+
+---
+
+## Особенности реализации
+
+- **DTO-слой** отделяет API-контракты от JPA-сущностей.
+- **Глобальная обработка исключений** возвращает предсказуемый JSON.
+- **Валидация** входных данных выполняется через Spring Validation.
+- **Наследование** используется для событий и площадок.
+- **Permissions** с кастомной системой ролей, проверяются декларативно через аннотации и AOP.
+- **Клиент** хранит JWT в сессии и добавляет его в заголовки запросов.
+- **JavaFX UI** построен на FXML, CSS и компонентном подходе.
+- **AtlantaFX** отвечает за современное оформление клиента.
+
+---
+
+## Документация
+
+- `README.md` — общее описание серверной части и API.
+- `curl-examples.md` — примеры запросов к REST API.
+- `Требования к проекту.docx` — исходные требования к учебному проекту.
+
+---
 
 ## Запуск клиента
 
@@ -92,7 +365,7 @@ java -jar target/philharmonic-client-1.0.0-SNAPSHOT.jar
 
 ## Начальные данные
 
-При первом запуске сервер автоматически создаёт таблицы (Hibernate `ddl-auto=update`) и заполняет роли и разрешения.
+При первом запуске сервер автоматически создаёт таблицы (черзе Hibernate, миграции не закладвыались в проект) и заполняет роли и разрешения.
 
 Или можно использовать SQL скрипты из `src/main/resources` для создания схемы с триггерами и стартовых стандартных данных пользователей
 
@@ -102,7 +375,6 @@ java -jar target/philharmonic-client-1.0.0-SNAPSHOT.jar
 - `ADMIN` – создание и редактирование (`CREATE`, `READ`, `UPDATE`)
 - `SUPERADMIN` – полный доступ (`CREATE`, `READ`, `UPDATE`, `DELETE`)
 
-- Пагинация: на сервере планируется добавить поддержку `Pageable` для всех GET-эндпоинтов (в текущей версии пока возвращаются все записи).
 - Клиент использует **AtlantaFX** для оформления, все стили в `src/main/resources/css/app.css`.
 
 Суперадминистратор может создавать пользователей и назначать роли через интерфейс клиента или напрямую через API.
@@ -122,17 +394,6 @@ java -jar target/philharmonic-client-1.0.0-SNAPSHOT.jar
 - `/auth/login`, `/auth/register`
 
 **Авторизация** основана на разрешениях (permissions). Методы контроллеров используют аннотацию `@RequirePermission("CREATE")` и т.д. Все эндпоинты (кроме `/auth/**`) требуют JWT токена в заголовке `Authorization: Bearer <token>`.
-
-## Переменные окружения
-
-Для продакшена обязательно задайте:
-
-| Переменная | Описание |
-|------------|----------|
-| `DB_URL`   | URL подключения к БД |
-| `DB_USER`  | Пользователь БД |
-| `DB_PASSWORD` | Пароль БД |
-| `JWT_SECRET` | Секретный ключ для подписи JWT (минимум 32 символа) |
 
 ## Лицензия
 
